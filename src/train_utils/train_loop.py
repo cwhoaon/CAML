@@ -54,3 +54,59 @@ def metric_train_fn(train_loaders, model, criterion, optimizer, scheduler, iter_
     losses.append(avg_loss)
   return iter_counter, losses, accs
 
+
+def metric_metatrain_fn(train_loader, model, criterion, optimizer, scheduler, iter_counter, device, **kwargs):
+  model.train()
+  losses, accs = [], []
+  print("metric_metatrain_fn")
+  for i, (support_images, support_labels, query_images, query_labels) in enumerate(train_loader):
+      print(device)
+    
+      support_images = support_images.to(device).squeeze(0)
+      support_labels = support_labels.to(device).squeeze(0)
+      query_images = query_images.to(device).squeeze(0)
+      query_labels = query_labels.to(device).squeeze(0)
+      
+      print(support_images.shape, support_labels.shape)
+      print(query_images.shape, query_labels.shape)
+
+      # Consistently translate arbitrary integer labels => labels \in [0, 4].
+      # unique_labels = torch.unique(labels, sorted=False)
+      # bool_vec = (labels == unique_labels.unsqueeze(1))
+      # labels = torch.max(bool_vec, dim=0)[1].to(torch.int64).to(inp.device)
+      # support_labels = labels[:way*shot]
+      # Perhaps a support set point was marked as a duplicate by approximating image equality with the norm.
+      # if torch.unique(support_labels).shape[0] != 5:
+      #   print(f'Malformed batch with only {torch.unique(support_labels).shape[0]} unique support examples. Skipping.')
+      #   continue
+      # query_labels = labels[way*shot:]
+      query_labels = torch.flip(query_labels, dims=[0])
+
+      logits = model(support_images, query_images, support_labels)
+      loss = criterion(logits, query_labels)
+
+      optimizer.zero_grad()
+      loss.backward()
+      torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+      optimizer.step()
+      scheduler.step()
+
+      loss_value = loss.item()
+      _, max_index = torch.max(logits, 1)
+      # if i % 50 == 0:
+      #   print(max_index)
+      #   print(query_labels)
+      acc = 100 * torch.sum(torch.eq(max_index, query_labels)).item() / query_labels.shape[0]
+      
+      losses.append(loss_value)
+      accs.append(acc)
+
+      if i % 50 == 0:
+        print(f'loss at step {i}: {loss:.3f}')
+        print(f'accuracy at step {i}: {acc:.3f}')
+  
+  avg_loss = sum(losses) / len(losses)
+  avg_acc = sum(accs) / len(accs)
+    
+  return iter_counter, avg_loss, avg_accs
+

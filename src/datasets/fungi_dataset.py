@@ -6,8 +6,8 @@ class FungiDataset(ImageFolder):
   def __init__(self, split: str = "train", transform=None):
     """class_column should be the attribute that we want to treat as classes. Either 'artist', 'genre', or 'style'"""
     assert split in ['train', 'val']
-    path_to_datasets = '../image_datasets/'
-    super().__init__(f'{path_to_datasets}fungi/{split}_images', transform=transform)
+    path_to_datasets = '/common_datasets/METAFLOW_DATASETS/caml_train_datasets/'
+    super().__init__(f'{path_to_datasets}fungi/{split}', transform=transform)
 
     self.target_to_index = {
       class_idx: []

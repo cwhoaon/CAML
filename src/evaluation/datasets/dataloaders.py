@@ -21,12 +21,12 @@ def get_dataset(data_path, is_training, transform_type, pre):
   return dataset
 
 
-def meta_test_dataloader(data_path, way, shot, pre, transform_type=None, query_shot=16, trial=1000):
+def meta_test_dataloader(data_path, episode_path, way, shot, pre, transform_type=None, query_shot=16, trial=1000):
   dataset = get_dataset(data_path=data_path, is_training=False, transform_type=transform_type, pre=pre)
 
   loader = torch.utils.data.DataLoader(
     dataset,
-    batch_sampler=samplers.random_sampler(data_source=dataset, way=way, shot=shot, query_shot=query_shot, trial=trial),
+    batch_sampler=samplers.fixed_sampler(episode_path=episode_path, way=way, shot=shot, query_shot=query_shot, trial=trial),
     num_workers=3,
     pin_memory=False)
 

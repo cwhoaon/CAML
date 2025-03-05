@@ -11,11 +11,15 @@ from src.datasets.dataloaders import get_metric_dataloader
 from src.datasets.dataset_utils import get_dataloaders
 
 from src.train_utils.eval_loop import metric_eval_fn
-from src.train_utils.train_loop import metric_train_fn
+from src.train_utils.train_loop import metric_train_fn, metric_metatrain_fn
 from src.train_utils.trainer import train_parser, Train_Manager
 
 from src.models.model_utils import get_model_by_type
 from src.models.feature_extractors.pretrained_fe import get_fe_metadata
+
+
+import utils.deit_util as deit_util
+from utils.args import get_args_parser
 """
 We evaluate CAML with CLIP, ResNet34, and Laion-2b feature extractors: 
   --fe_type cache:timm:vit_base_patch16_clip_224.openai:768 
@@ -86,6 +90,16 @@ python src/train.py \
      --save_dir test_CAML_repo \
      --gpu 2
 """
+parser = get_args_parser()
+shell_script = ""
+args = parser.parse_args(shell_script.split())
+
+deit_util.init_distributed_mode(args)
+
+device = torch.device(args.device)
+
+num_tasks = deit_util.get_world_size()
+global_rank = deit_util.get_rank()
 
 args = train_parser()
 assert len(args.batch_sizes) == 1  # Batch sizes now = 1.
@@ -102,11 +116,16 @@ fe_metadata = get_fe_metadata(args)
 # Load the dataset.
 train_transforms = fe_metadata['train_transform']
 test_transforms = fe_metadata['test_transform']
-device = torch.device(f'cuda:{args.gpu}')
+# device = torch.device(f'cuda:{args.gpu}')
 
 # Load the model.
+
+print(device)
 model = get_model_by_type(args, fe_metadata, device)
 model.to(device)
+
+model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+model_without_ddp = model.module
 
 # Train on 5-way-5-shot and 5-way-1-shot [in that order].
 dataset_spec = [('imagenet', 5, 5), ('imagenet', 5, 1),
@@ -115,6 +134,11 @@ dataset_spec = [('imagenet', 5, 5), ('imagenet', 5, 1),
                 ('wikiart-genre', 5, 1), ('coco', 5, 5), ('coco', 5, 1),
                 ('wikiart-artist', 5, 5), ('wikiart-artist', 5, 1)
                 ]
+if args.dataset == 'metadata':
+  dataset_spec = [
+    ('metadata', 0, 0)
+  ]
+  
 train_dataloaders = get_dataloaders(datasets=dataset_spec,
                                     split='train',
                                     dataloader_fn=get_metric_dataloader,
@@ -142,13 +166,15 @@ if 'MetaOpt' in args.model:
                          num_loops=num_evals,
                          criterion=NLLLoss().to(device))
 elif args.model in ['MetaQDA', 'Proto', 'SNAIL'] or 'CAML' in args.model:
-    train_func = partial(metric_train_fn,
-                         train_loaders=train_dataloaders,
-                         criterion=CrossEntropyLoss().to(device))
+    train_func = partial(metric_metatrain_fn,
+                         train_loader=train_dataloaders,
+                         criterion=CrossEntropyLoss().to(device),
+                         device=device)
     valid_func = partial(metric_eval_fn,
                          eval_loaders=valid_dataloaders,
                          num_loops=num_evals,
-                         criterion=CrossEntropyLoss().to(device))
+                         criterion=CrossEntropyLoss().to(device),
+                         device=device)
 
 else:
     raise Exception(f'Model "{args.model}" is not recognized')

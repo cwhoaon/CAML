@@ -170,7 +170,7 @@ class Train_Manager:
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     np.random.seed(seed)
-    torch.cuda.set_device(args.gpu)
+    # torch.cuda.set_device(args.gpu)
     name = f'{args.fe_type}'
 
     if args.detailed_name:
@@ -215,21 +215,22 @@ class Train_Manager:
 
     for e in tqdm(range(total_epoch)):
       # Compute training stats.
-      iter_counter, train_losses, train_accs = train_func(
+      iter_counter, train_loss, train_acc = train_func(
         model=model,
         optimizer=optimizer,
         scheduler=scheduler,
         iter_counter=iter_counter)
       logger.info("")
       logger.info("epoch %d/%d, iter %d:" % (e + 1, total_epoch, iter_counter))
-      train_acc_str = ' '.join([
-        f'dataset {ds} @{w}-{s} -> acc_{a:.3f}' for ((ds, w, s), a) in zip(self.dataset_spec, train_accs)
-      ])
-      train_loss_str = ' '.join([
-        f'dataset {ds} @{w}-{s} -> loss_{l:.3f}' for ((ds, w, s), l) in zip(self.dataset_spec, train_losses)
-      ])
-      logger.info(f'train_acc: {train_acc_str}')
-      logger.info(f'train_losses: {train_loss_str}')
+      
+      # train_acc_str = ' '.join([
+      #   f'dataset {ds} @{w}-{s} -> acc_{a:.3f}' for ((ds, w, s), a) in zip(self.dataset_spec, train_accs)
+      # ])
+      # train_loss_str = ' '.join([
+      #   f'dataset {ds} @{w}-{s} -> loss_{l:.3f}' for ((ds, w, s), l) in zip(self.dataset_spec, train_losses)
+      # ])
+      logger.info(f'train_acc: {train_acc}')
+      logger.info(f'train_losses: {train_loss}')
 
       # Compute valid stats.
       with torch.no_grad():

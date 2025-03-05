@@ -11,139 +11,149 @@ from torchvision.models.vision_transformer import MLPBlock
 from typing import Any, Callable
 
 from torch.nn import functional as F
+from .MultiheadAttention import BitfitMultiheadAttention
 
 from pyprojroot import here as project_root
 
 sys.path.insert(0, str(project_root()))
 
 
-def get_encoder(size, image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def get_encoder(size, image_dim, num_classes, num_bias=1, *, device=torch.device('cuda:0'), **kwargs: Any):
   if size == 'tiny':
-    return tiny_32(image_dim, num_classes, device=device, **kwargs)
+    return tiny_32(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'small':
-    return small_32(image_dim, num_classes, device=device, **kwargs)
+    return small_32(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'base':
-    return short_32(image_dim, num_classes, device=device, **kwargs)
+    return short_32(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'base':
-    return base_32(image_dim, num_classes, device=device, **kwargs)
+    return base_32(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'large':
-    return large_32(image_dim, num_classes, device=device, **kwargs)
+    return large_32(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'convnext':
-    return convnext_32(image_dim, num_classes, device=device, **kwargs)
+    return convnext_32(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'laion':
-    return laion_2b(image_dim, num_classes, device=device, **kwargs)
+    return laion_2b(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'resnet34':
-    return resnet34(image_dim, num_classes, device=device, **kwargs)
+    return resnet34(image_dim, num_classes, num_bias, device=device, **kwargs)
   elif size == 'huge':
-    return huge_32(image_dim, num_classes, device=device, **kwargs)
+    return huge_32(image_dim, num_classes, num_bias, device=device, **kwargs)
 
 
-def tiny_32(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def tiny_32(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=4,
                             num_heads=8,
                             hidden_dim=1024,
                             mlp_dim=1024,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def small_32(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def small_32(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=8,
                             num_heads=8,
                             hidden_dim=1024,
                             mlp_dim=1024,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def short_32(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def short_32(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=4,
                             num_heads=12,
                             hidden_dim=768,
                             mlp_dim=3072,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def base_32(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def base_32(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=12,
                             num_heads=12,
                             hidden_dim=768,
                             mlp_dim=3072,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def large_32(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def large_32(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=24,
                             num_heads=16,
                             hidden_dim=1024,
                             mlp_dim=4096,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def resnet34(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def resnet34(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=24,
                             num_heads=16,
                             hidden_dim=768,
                             mlp_dim=4096,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def convnext_32(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def convnext_32(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=24,
                             num_heads=16,
                             hidden_dim=1280,
                             mlp_dim=4096,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def laion_2b(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def laion_2b(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=24,
                             num_heads=16,
                             hidden_dim=1536,
                             mlp_dim=4096,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
-def huge_32(image_dim, num_classes, *, device=torch.device('cuda:0'), **kwargs: Any):
+def huge_32(image_dim, num_classes, num_bias, *, device=torch.device('cuda:0'), **kwargs: Any):
   return TransformerEncoder(image_dim=image_dim, num_classes=num_classes,
                             num_layers=32,
                             num_heads=16,
                             hidden_dim=1280,
                             mlp_dim=5120,
+                            num_bias=num_bias,
                             device=device,
                             **kwargs,
                             )
 
 
 def get_elmes(p, C, cuda):
-  ones = torch.ones((C, 1), dtype=torch.float32)
+  ones = torch.ones((C, 1), dtype=torch.bfloat16)
   M_star = torch.sqrt(torch.tensor(C / (C - 1))) * (
-          torch.eye(C) - 1 / C * torch.matmul(ones, torch.transpose(ones, 0, 1)))
+          torch.eye(C) - 1 / C * torch.matmul(ones, torch.transpose(ones, 0, 1))).to(torch.bfloat16)
   np.random.seed(50)
   U = np.random.random(size=(p, C))
-  U = torch.tensor(np.linalg.qr(U)[0][:, :C]).to(torch.float32)
+  U = torch.tensor(np.linalg.qr(U)[0][:, :C]).to(torch.bfloat16)
   return (U @ M_star).T.to(cuda)
 
 
@@ -155,6 +165,7 @@ class TransformerEncoder(nn.Module):
                num_heads: int,
                hidden_dim: int,
                mlp_dim: int,
+               num_bias: int,
                device: torch.device,
                dropout: float = 0.0,
                attention_dropout: float = 0.0,
@@ -190,6 +201,7 @@ class TransformerEncoder(nn.Module):
         dropout,
         attention_dropout,
         norm_layer,
+        num_bias=num_bias
       )
     self.device = device
     self.num_classes = num_classes
@@ -212,17 +224,29 @@ class TransformerEncoder(nn.Module):
       self.demonstration_proj = nn.Linear(768 + 5, 1024).to(
         device)  # Hardcode for clip: 768 clip embeddings + 5 one hot-label encodings.
 
-  def forward(self, features, labels):
+  def forward(self, features, labels, bias_idx=None):
+    is_multiple_seeds = labels.dim()==2
+    
+    if is_multiple_seeds:
+      n_seeds, n_support = labels.shape
+    else:
+      labels = labels.unsqueeze(0)
+    
     features = self.feature_proj(features)
     b, _, _ = features.shape
-
-    s = labels.shape
-    label_one_hot = F.one_hot(labels.unsqueeze(0), num_classes=self.num_classes).to(torch.float32)
-    label_embeddings = label_one_hot @ (self.elmes_scale * self.label_elmes)
-    batched_label_embeddings = torch.cat([self.unk_emb, label_embeddings], dim=1).repeat(b, 1, 1)
+    
+    label_one_hot = F.one_hot(labels, num_classes=self.num_classes).to(torch.bfloat16)
+    elmes = self.elmes_scale * self.label_elmes
+    label_embeddings = label_one_hot @ elmes
+    if is_multiple_seeds:
+      batched_label_embeddings = torch.cat([self.unk_emb.repeat(n_seeds, 1, 1), label_embeddings], dim=1)
+      batched_label_embeddings = batched_label_embeddings.repeat_interleave(b//n_seeds, dim=0)
+    else:
+      batched_label_embeddings = torch.cat([self.unk_emb, label_embeddings], dim=1).repeat(b, 1, 1)
+      
     demonstrations = torch.cat([features, batched_label_embeddings], dim=-1)
 
-    seq = self.encoder.forward(demonstrations)
+    seq = self.encoder.forward(demonstrations, bias_idx)
     return seq
 
   def forward_imagenet(self, features, labels):
@@ -230,7 +254,7 @@ class TransformerEncoder(nn.Module):
     b, s, d = features.shape
     features = self.feature_proj(features)
     label_embeddings = (F.one_hot(labels.reshape(b * s, -1), num_classes=self.num_classes).to(
-      torch.float32) @ (self.elmes_scale * self.label_elmes)).reshape(b, s, -1)
+      torch.bfloat16) @ (self.elmes_scale * self.label_elmes)).reshape(b, s, -1)
     label_embeddings[:, 0, :] = self.unk_emb
     demonstrations = torch.cat([features, label_embeddings], dim=-1)
 
@@ -238,9 +262,9 @@ class TransformerEncoder(nn.Module):
     query = seq[:, 0, :]
     return self.output_proj(query)
 
-  def forward_imagenet_v2(self, features, labels, way, shot):
+  def forward_imagenet_v2(self, features, labels, way, shot, bias_idx=None):
     # Assumes the labels has length = len(features) -1 => need to cat the unk emb to the labels.
-    seq = self.forward(features, labels)
+    seq = self.forward(features, labels, bias_idx)
     query = seq[:, 0, :]
     return self.output_proj(query)
 
@@ -248,7 +272,7 @@ class TransformerEncoder(nn.Module):
     features = self.feature_proj(features)
     b, _, _ = features.shape
 
-    label_one_hot = F.one_hot(labels.unsqueeze(0), num_classes=self.num_classes).to(torch.float32)
+    label_one_hot = F.one_hot(labels.unsqueeze(0), num_classes=self.num_classes).to(torch.bfloat16)
     batched_label_embeddings = torch.cat([self.zeros_embedding, label_one_hot], dim=1).repeat(b, 1, 1)
     demonstrations = torch.cat([features, batched_label_embeddings], dim=-1)
 
@@ -267,7 +291,7 @@ class TransformerEncoder(nn.Module):
     # Concatenate the zeros vector with the sequence in the first position.
     label_embeddings = torch.cat([self.zeros_embedding,
                                   F.one_hot(labels.reshape(b * s, -1), num_classes=self.num_classes).to(
-                                    torch.float32)]).reshape(b, s, -1)
+                                    torch.bfloat16)]).reshape(b, s, -1)
     demonstrations = torch.cat([features, label_embeddings], dim=-1)
     demonstrations = self.demonstration_proj(demonstrations) + self.positional_embedding[:, :demonstrations.shape[1], :]
 
@@ -275,6 +299,15 @@ class TransformerEncoder(nn.Module):
     query = seq[:, -1, :]
     return self.output_proj(query)
 
+
+class MISequential(nn.Sequential):
+    def forward(self, *inputs):
+        for module in self._modules.values():
+            if type(inputs) == tuple:
+                inputs = module(*inputs)
+            else:
+                inputs = module(inputs)
+        return inputs
 
 class Encoder(nn.Module):
   """Transformer Model Encoder for sequence to sequence translation."""
@@ -289,6 +322,7 @@ class Encoder(nn.Module):
           attention_dropout: float,
           norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
           set_transformer=False,
+          num_bias=1
   ):
     super().__init__()
     self.dropout = nn.Dropout(dropout)
@@ -313,13 +347,18 @@ class Encoder(nn.Module):
           dropout,
           attention_dropout,
           norm_layer,
+          num_bias=num_bias
         )
-    self.layers = nn.Sequential(layers)
+    self.layers = MISequential(layers)
     self.ln = norm_layer(hidden_dim)
+    self.num_bias = num_bias
 
-  def forward(self, x: torch.Tensor):
+  def forward(self, x: torch.Tensor, bias_idx=None):
     torch._assert(x.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {x.shape}")
-    return self.ln(self.layers(self.dropout(x)))
+    out = self.layers(self.dropout(x), bias_idx)
+    if isinstance(out, tuple):
+      out = out[0]
+    return self.ln(out)
 
 
 class EncoderBlock(nn.Module):
@@ -333,29 +372,31 @@ class EncoderBlock(nn.Module):
           dropout: float,
           attention_dropout: float,
           norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+          num_bias=1
   ):
     super().__init__()
     self.num_heads = num_heads
+    self.num_bias = num_bias
 
     # Attention block
     self.ln_1 = norm_layer(hidden_dim)
-    self.self_attention = nn.MultiheadAttention(hidden_dim, num_heads, dropout=attention_dropout, batch_first=True)
+    self.self_attention = BitfitMultiheadAttention(hidden_dim, num_heads, num_bias, dropout=attention_dropout, batch_first=True)
     self.dropout = nn.Dropout(dropout)
 
     # MLP block
     self.ln_2 = norm_layer(hidden_dim)
     self.mlp = MLPBlock(hidden_dim, mlp_dim, dropout)
 
-  def forward(self, input: torch.Tensor):
+  def forward(self, input: torch.Tensor, bias_idx=None):
     torch._assert(input.dim() == 3, f"Expected (batch_size, seq_length, hidden_dim) got {input.shape}")
     x = self.ln_1(input)
-    x, _ = self.self_attention(query=x, key=x, value=x, need_weights=False)
+    x, _ = self.self_attention(query=x, key=x, value=x, bias_idx=bias_idx)
     x = self.dropout(x)
     x = x + input
 
     y = self.ln_2(x)
     y = self.mlp(y)
-    return x + y
+    return x + y, bias_idx
 
 
 class SetEncoderBlock(EncoderBlock):

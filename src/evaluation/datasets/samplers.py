@@ -1,5 +1,6 @@
 # Adapted from https://github.com/Tsingularity/FRN.
 
+import torch
 import numpy as np
 from copy import deepcopy
 from torch.utils.data import Sampler
@@ -92,5 +93,22 @@ class random_sampler(Sampler):
                 id_list.extend(class2id[cat][:shot])
             for cat in picked_class:
                 id_list.extend(class2id[cat][shot:(shot+query_shot)])
-
+                
+            
+            
             yield id_list
+
+
+# sampler for fixed episodes
+class fixed_sampler(Sampler):
+    def __init__(self,episode_path,way,shot,query_shot=16,trial=1000):
+        self.episode_path = episode_path
+        self.way = way
+        self.shot = shot
+        self.trial = trial
+        self.query_shot = query_shot
+        self.episodes = torch.load(episode_path)
+    
+    def __iter__(self):
+        for i in range(self.trial):
+            yield self.episodes[i]

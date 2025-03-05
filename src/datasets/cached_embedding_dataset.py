@@ -56,3 +56,6 @@ class CachedEmbeddingDataset(torchvision.datasets.DatasetFolder):
     }
     for sample_idx, target in enumerate(self.targets):
       self.target_to_index[target].append(sample_idx)
+      
+  def get_tgt2idx(self):
+    return self.target_to_index
