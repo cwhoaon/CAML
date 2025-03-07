@@ -43,10 +43,10 @@ def process_batch(inp, way=5, shot=5, query_shot=16, device=torch.device('cuda')
 
 
 @torch.no_grad()
-def evaluate_single_batch(model, batch, device=torch.device('cuda'), dtype=torch.bfloat16):
+def evaluate_single_batch(model, batch, way=5, shot=5, device=torch.device('cuda'), dtype=torch.bfloat16):
     model.eval()
     inp, y_s, y_q, bias_idx = batch
-    n_s = 25
+    n_s = y_s.shape[0]
     y_q_pred = model(inp, y_s, n_s, bias_idx)
 
     acc = (y_q_pred.argmax(-1) == y_q).float().mean()
@@ -54,7 +54,7 @@ def evaluate_single_batch(model, batch, device=torch.device('cuda'), dtype=torch
     
     return acc, loss
 
-def find_dt(model, flow, dataloader, dt, p_init, euler_steps, model_dict, way=5, shot=5, device=torch.device('cuda'), dtype=torch.bfloat16):
+def find_dt(model, flow, dataloader, dt, p_init, euler_step, model_dict, way=5, shot=5, device=torch.device('cuda'), dtype=torch.bfloat16):
     best_acc = 0
     best_dt = 0
     dt_candidates = [dt * s for s in [0.00001, 0.00002, 0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02]]
@@ -65,17 +65,17 @@ def find_dt(model, flow, dataloader, dt, p_init, euler_steps, model_dict, way=5,
             if i >= 40:
                 break
             
-            valid_batch = process_batch(inp)
+            valid_batch = process_batch(inp, way, shot)
             inp, y_s, y_q, bias_idx = valid_batch
             x_s = inp[:, :way*shot]
             
-            p_traj = flow.inference(p_init, x_s, y=y_s.unsqueeze(0), euler_step=max(euler_steps), dt=dt, get_traj=True)
-            p = p_traj[-1]
+            p_traj = flow.inference(p_init, x_s, y=y_s.unsqueeze(0), euler_step=euler_step, dt=dt, get_traj=True)
+            p = p_traj[euler_step-1]
             
             for b in range(p_init.shape[1]):
                 model.feature_extractor.blocks[b*2].attn.qkv_bias.q_bias.data = p[:, b]
             
-            acc, loss = evaluate_single_batch(model, valid_batch)
+            acc, loss = evaluate_single_batch(model, valid_batch, way, shot)
             acc_dt.append(acc)
         
         acc = torch.stack(acc_dt).mean()
@@ -92,21 +92,21 @@ def find_dt(model, flow, dataloader, dt, p_init, euler_steps, model_dict, way=5,
 def find_lr(model, dataloader, model_dict, way=5, shot=5, device=torch.device('cuda'), dtype=torch.bfloat16):
     best_acc = 0
     best_lr = 0
-    for lr in [0, 0.00001, 0.00005, 0.0001, 0.001]:
+    for lr in [0, 0.000001, 0.000003, 0.000006, 0.00001, 0.00005, 0.0001, 0.001]:
         print(f"Testing: {lr}")
         acc_lr = []
         for i, (inp, _) in enumerate(dataloader):
             if i >= 5:
                 break
             
-            valid_batch = process_batch(inp)
+            valid_batch = process_batch(inp, way, shot)
             inp, y_s, y_q, bias_idx = valid_batch
             x_s = inp[:, :way*shot]
             finetune_batch = x_s, y_s, bias_idx
             
             if lr != 0:
-                model = finetune(model, finetune_batch, lr, model_dict)
-            acc, loss = evaluate_single_batch(model, valid_batch)
+                model = finetune(model, finetune_batch, lr, model_dict, way, shot)
+            acc, loss = evaluate_single_batch(model, valid_batch, way, shot)
             acc_lr.append(acc)
         
         acc = torch.stack(acc_lr).mean()
@@ -120,7 +120,7 @@ def find_lr(model, dataloader, model_dict, way=5, shot=5, device=torch.device('c
     return best_lr
 
 
-def finetune(model, finetune_batch, lr, model_dict, num_iter=50, device=torch.device('cuda'), dtype=torch.bfloat16):
+def finetune(model, finetune_batch, lr, model_dict, way=5, shot=5, num_iter=50, device=torch.device('cuda'), dtype=torch.bfloat16):
     model.train()
     model.load_state_dict(model_dict, strict=False)
     
@@ -139,13 +139,14 @@ def finetune(model, finetune_batch, lr, model_dict, num_iter=50, device=torch.de
     n_s = x_s.shape[0]
     
     for i in range(num_iter):
-        opt.zero_grad()
-        # import ipdb; ipdb.set_trace()
         z = DiffAugment(x_s, aug_types, aug_prob, detach=True)
         
         inp = torch.cat([x_s, z], dim=0).unsqueeze(0)
         z_pred = model(inp, y_s, n_s, bias_idx)
+        
         loss = criterion(z_pred, y_s)
+        
+        opt.zero_grad()
         loss.backward()
         opt.step()
     
@@ -153,57 +154,45 @@ def finetune(model, finetune_batch, lr, model_dict, num_iter=50, device=torch.de
         
     
 
-def evaluate(eval_version, model, flow, eval_dataloader, euler_steps, p_init, dt, model_dict, way=5, shot=5, query_shot=16, device=torch.device('cuda'), dtype=torch.bfloat16):
+def evaluate(eval_version, model, flow, eval_dataloader, euler_step, p_init, dt, model_dict, way=5, shot=5, query_shot=16, device=torch.device('cuda'), dtype=torch.bfloat16):
     accs, losses = [], []
     
     if eval_version == 'finetune':
-        lr = find_lr(model, eval_dataloader, model_dict)
+        lr = find_lr(model, eval_dataloader, model_dict, way=way, shot=shot)
         
     if eval_version == 'flow':
-        dt = find_dt(model, flow, eval_dataloader, dt, p_init, euler_steps, model_dict)
+        dt = find_dt(model, flow, eval_dataloader, dt, p_init, euler_step, model_dict, way=way, shot=shot)
     
     
     pbar = tqdm(total=500, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}", leave=False)
     
     for valid_step, (inp, _) in enumerate(eval_dataloader):
-        valid_batch = process_batch(inp)
+        valid_batch = process_batch(inp, way, shot)
         
         if eval_version == 'vanilla':
-            acc, loss = evaluate_single_batch(model, valid_batch, device=device, dtype=dtype)
+            acc, loss = evaluate_single_batch(model, valid_batch, way=way, shot=shot, device=device, dtype=dtype)
             accs.append(acc)
             losses.append(loss)
         
         if eval_version == 'flow':
             inp, support_labels, target, bias_idx = valid_batch
+
             x_s = inp[:, :way*shot]
             
-            p_traj = flow.inference(p_init, x_s, y=support_labels.unsqueeze(0), euler_step=max(euler_steps), dt=dt, get_traj=True)
-            
-            acc_steps = []
-            loss_steps = []
-            
-            for euler_step in euler_steps:
-                if euler_step == 0:
-                    p = p_init
-                else:
-                    p = p_traj[euler_step-1]
-                
-                for b in range(p_init.shape[1]):
-                    model.feature_extractor.blocks[b*2].attn.qkv_bias.q_bias.data = p[:, b]
-                acc, loss = evaluate_single_batch(model, valid_batch, device=device, dtype=dtype)
-                acc_steps.append(acc)
-                loss_steps.append(loss)
-            acc_steps = torch.stack(acc_steps)
-            loss_steps = torch.stack(loss_steps)
-            accs.append(acc_steps)
-            losses.append(loss_steps)
+            p_traj = flow.inference(p_init, x_s, y=support_labels.unsqueeze(0), euler_step=euler_step, dt=dt, get_traj=True)
+            p = p_traj[euler_step-1]
+            for b in range(p_init.shape[1]):
+                model.feature_extractor.blocks[b*2].attn.qkv_bias.q_bias.data = p[:, b]
+            acc, loss = evaluate_single_batch(model, valid_batch, way=way, shot=shot, device=device, dtype=dtype)
+            accs.append(acc)
+            losses.append(loss)
         
         if eval_version == 'finetune':
             inp, y_s, y_q, bias_idx = valid_batch
             x_s = inp[:, :way*shot]
             finetune_batch = x_s, y_s, bias_idx
-            model = finetune(model, finetune_batch, lr, model_dict, device=device, dtype=dtype)
-            acc, loss = evaluate_single_batch(model, valid_batch)
+            model = finetune(model, finetune_batch, lr, model_dict, way=way, shot=shot, device=device, dtype=dtype)
+            acc, loss = evaluate_single_batch(model, valid_batch, way=way, shot=shot)
             accs.append(acc)
             losses.append(loss)
 
@@ -230,7 +219,7 @@ def parse_args(shell_script=None):
     #pascal_paintings만 하기
     parser.add_argument('--datasets', nargs="+", default=['aircraft', 'chestX', 'pascal_paintings', 'paintings'])
     
-    parser.add_argument('--euler_steps', type=int, nargs='+', default=[0, 1, 5, 10, 20, 100])
+    parser.add_argument('--euler_step', type=int, default=50)
     parser.add_argument('--n_tasks', type=int, default=500)
     parser.add_argument('--hidden_dim', type=int, default=1536)
     parser.add_argument('--n_layers', type=int, default=4)
@@ -268,6 +257,7 @@ def parse_args(shell_script=None):
 if __name__ == '__main__':
     args = parse_args()
     
+    assert args.shot in [1, 5], f"args.shot is {args.shot}, but it should be 1 or 5"
     device = torch.device('cuda')
     dtype = torch.bfloat16
     
@@ -370,7 +360,7 @@ if __name__ == '__main__':
             dt = 1 / (n_timesteps - 1)
         else:
             n_pseudo_timesteps = 51
-            args.euler_steps = [i for i in range(0, n_pseudo_timesteps, 10)] + [1, 5]
+            args.euler_step = 50
             dt = 1 / (n_pseudo_timesteps - 1)
 
         n_modules = n_blocks // 2
@@ -404,7 +394,7 @@ if __name__ == '__main__':
             data_path=data_path,
             episode_path=episode_path,
             way=5,
-            shot=5,
+            shot=args.shot,
             pre=False,
             transform_type=test_transforms,
             query_shot=16,
@@ -414,7 +404,7 @@ if __name__ == '__main__':
         print(f"{dataset} dataset loaded")    
         
         print("Start evaluation!")
-        accs, losses = evaluate(args.eval_version, model, flow, eval_loader, args.euler_steps, p_init, dt, model_dict)
+        accs, losses = evaluate(args.eval_version, model, flow, eval_loader, args.euler_step, p_init, dt, model_dict, way=5, shot=args.shot)
         
         save_path = os.path.join(args.save_dir, args.model_size, args.eval_version)
         if args.eval_version == 'flow':
@@ -423,8 +413,8 @@ if __name__ == '__main__':
         
         os.makedirs(save_path, exist_ok=True)
         if args.shot==5:
-            ws = '5s_5s_'
+            ws = '5w_5s_'
         elif args.shot==1:
-            ws = '5s_1s_'
-        np.save(os.path.join(save_path, f"{wc}acc.npy"), accs)
-        np.save(os.path.join(save_path, f"{wc}loss.npy"), losses)
+            ws = '5w_1s_'
+        np.save(os.path.join(save_path, f"{ws}acc.npy"), accs)
+        np.save(os.path.join(save_path, f"{ws}loss.npy"), losses)
