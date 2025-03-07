@@ -24,7 +24,7 @@ from torchvision.datasets import ImageFolder
 # Full batch dataset for inf-shot finetuning
 class CAMLDataset(ImageFolder):
   def __init__(self, dataset, split, transform):
-    if split=='train' or split=='valid':
+    if split=='train' or split=='val':
       self.dataset_path = f"/common_datasets/METAFLOW_DATASETS/caml_train_datasets/{dataset}/{split}"
     elif split=='test':
       self.dataset_path = f"/common_datasets/METAFLOW_DATASETS/caml_universal_eval_datasets/{dataset}/{split}"
@@ -93,11 +93,12 @@ class FineTuneDataset(torch.utils.data.Dataset):
 class EpisodicDataset(torch.utils.data.Dataset):
   def __init__(self, domain, split, shot=5, query=10, transform=None, offset=0):
     self.domain = domain
-    embedding_cache_dir = f"/common_datasets/METAFLOW_DATASETS/caml_train_embeddings/{domain}/cached_embeddings/timm:vit_huge_patch14_clip_224.laion2b:1280"
-    task_path = f"/common_datasets/METAFLOW_DATASETS/task_descriptions/{domain}_embedding_{split}_500.pth"
+    # embedding_cache_dir = f"/common_datasets/METAFLOW_DATASETS/caml_train_embeddings/{domain}/cached_embeddings/timm:vit_huge_patch14_clip_224.laion2b:1280"
+    # task_path = f"/common_datasets/METAFLOW_DATASETS/task_descriptions/{domain}_embedding_{split}_500.pth"
+    # self.dataset = CachedEmbeddingDataset(embedding_cache_dir, split=split)
       
-    # self.dataset = CAMLDataset(domain, split, transform)
-    self.dataset = CachedEmbeddingDataset(embedding_cache_dir, split=split)
+    task_path = f"/common_datasets/METAFLOW_DATASETS/task_descriptions/{domain}_{split}_500.pth"
+    self.dataset = CAMLDataset(domain, split, transform)
     self.split = split
     self.tasks = torch.load(task_path)
     self.n_task = len(self.tasks)
@@ -125,25 +126,31 @@ class EpisodicDataset(torch.utils.data.Dataset):
       query_labels_per_class = []
       
       img_id_list = self.sample_list(self.target_to_index[class_id.item()], self.shot+self.query) if not fix_seed else self.target_to_index[class_id.item()][:self.shot+self.query]
+      if len(img_id_list) < self.shot:
+        shot = len(img_id_list)-2
+      else:
+        shot = self.shot
       for j, image_id in enumerate(img_id_list):
         img, label = self.dataset[image_id]
-        if j < self.shot:
+        if j < shot:
           support_images_per_class.append(img)
           support_labels_per_class.append(i)
         else:
           query_images_per_class.append(img)
           query_labels_per_class.append(i)
-      
+      # print()
+      # print(f"domain: {self.domain}, idx: {class_id}, total_len:{len(img_id_list)}, query_len: {len(query_images_per_class)}")
       support_images_per_class = torch.stack(support_images_per_class)
       support_labels_per_class = torch.tensor(support_labels_per_class).long()
-      query_images_per_class = torch.stack(query_images_per_class)
-      query_labels_per_class = torch.tensor(query_labels_per_class).long()
-      
       support_images.append(support_images_per_class)
       support_labels.append(support_labels_per_class)
-      query_images.append(query_images_per_class)
-      query_labels.append(query_labels_per_class)
-    
+      
+      if len(query_images_per_class) != 0:
+        query_images_per_class = torch.stack(query_images_per_class)
+        query_labels_per_class = torch.tensor(query_labels_per_class).long()
+        query_images.append(query_images_per_class)
+        query_labels.append(query_labels_per_class)
+      
     support_images = torch.cat(support_images)
     support_labels = torch.cat(support_labels)
     query_images = torch.cat(query_images)
@@ -154,20 +161,32 @@ class EpisodicDataset(torch.utils.data.Dataset):
   def sample_support(self, idx, fix_seed=False):
     class_ids = self.tasks[idx+self.offset]
     images = []
+    masks = []
     for i, class_id in enumerate(class_ids):
       images_per_class = []
+      masks_per_class = []
       
       img_id_list = self.sample_list(self.target_to_index[class_id.item()], self.shot) if not fix_seed else self.target_to_index[class_id.item()][:self.shot]
-      for image_id in img_id_list:
-        img, label = self.dataset[image_id]
-        images_per_class.append(img)
+      for i in range(self.shot):
+        if i < len(img_id_list):
+          image_id = img_id_list[i]
+          img, label = self.dataset[image_id]
+          images_per_class.append(img)
+          masks_per_class.append(1)
+        else:
+          blank_img = torch.zeros(img.shape)
+          images_per_class.append(blank_img)
+          masks_per_class.append(0)
+
       images_per_class = torch.stack(images_per_class)
+      masks_per_class = torch.tensor(masks_per_class)
       
       images.append(images_per_class)
+      masks.append(masks_per_class)
     
     images = torch.stack(images)
-    mask = torch.ones((5, 5)).bool() # Only for compatibility
-    return images, mask
+    masks = torch.stack(masks).bool()
+    return images, masks
   
   
   def sample_list(self, my_list, k):

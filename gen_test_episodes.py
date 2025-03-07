@@ -26,9 +26,31 @@ transform = transforms.Compose([
 
 
 save_folder = "/common_datasets/METAFLOW_DATASETS/test_episodes"
-# os.makedirs(save_folder, exist_ok=True)
+os.makedirs(save_folder, exist_ok=True)
 
-# datasets = ['aircraft', 'cifar_fs', 'chestX', 'paintings']
+# datasets = ['aircraft', 'chestX', 'paintings', 'pascal_paintings']
+datasets = ['pascal_paintings']
+for dataset_name in datasets:
+    data_path = f"/common_datasets/METAFLOW_DATASETS/caml_universal_eval_datasets/{dataset_name}/test"
+    # data_path = f"/common_datasets/METAFLOW_DATASETS/caml_train_datasets/fungi/train"
+    # data_path = f"/common_datasets/METAFLOW_DATASETS/caml_universal_eval_datasets"
+    
+    dataset = dataloaders.get_dataset(data_path=data_path, is_training=False, transform_type=transform, pre=False)
+    sampler = samplers.random_sampler(
+        dataset,5,shot=5,query_shot=16,trial=1000
+    )
+    episodes = []
+    for ids in sampler:
+        ids = torch.tensor(ids)
+        episodes.append(ids)
+    
+    # print(len(episodes))
+    
+    
+    save_name = os.path.join(save_folder, f"{dataset_name}.pth")
+    print(save_name)
+    torch.save(episodes, save_name)
+
 # for dataset_name in datasets:
 #     data_path = f"/common_datasets/METAFLOW_DATASETS/caml_universal_eval_datasets/{dataset_name}/test"
 #     # data_path = f"/common_datasets/METAFLOW_DATASETS/caml_train_datasets/fungi/train"
@@ -36,7 +58,7 @@ save_folder = "/common_datasets/METAFLOW_DATASETS/test_episodes"
     
 #     dataset = dataloaders.get_dataset(data_path=data_path, is_training=False, transform_type=transform, pre=False)
 #     sampler = samplers.random_sampler(
-#         dataset,5,5,query_shot=16,trial=1000
+#         dataset,5,shot=1,query_shot=16,trial=1000
 #     )
 #     episodes = []
 #     for ids in sampler:
@@ -46,11 +68,12 @@ save_folder = "/common_datasets/METAFLOW_DATASETS/test_episodes"
 #     # print(len(episodes))
     
     
-#     save_name = os.path.join(save_folder, f"{dataset_name}.pth")
+#     save_name = os.path.join(save_folder, f"{dataset_name}_5w_1s.pth")
 #     print(save_name)
 #     torch.save(episodes, save_name)
 
 
-epis = torch.load(os.path.join(save_folder, 'aircraft.pth'))
-print(len(epis))
-print(epis[0])
+
+# epis = torch.load(os.path.join(save_folder, 'aircraft.pth'))
+# print(len(epis))
+# print(epis[0])

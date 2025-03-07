@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
 
 import os
 import argparse
@@ -24,6 +25,7 @@ from meta_flow import Flow, FlowDataset, train_collate_fn
 from src.datasets.dataloaders import FineTuneDataset, AggregatedDataset, EpisodicDataset
 from src.models.feature_extractors.pretrained_fe import get_fe_metadata
 from src.models.CAML import CAML
+from src.models.feature_extractors.customed_fe import VisionTransformer
 
 
 
@@ -94,7 +96,9 @@ def evaluate(flow, model, eval_loader, euler_steps, dt, n_valid_steps, device, l
     if n_valid_steps < 0:
         n_valid_steps = len(eval_loader)
     
-    p_vanilla = torch.cat([model.transformer_encoder.encoder.layers[b*2].self_attention.in_proj_bitfit_bias.q_bias.data for b in range(12)]).unsqueeze(0)
+    
+    n_blocks = len(model.feature_extractor.blocks)
+    p_vanilla = torch.cat([model.feature_extractor.blocks[b*2].attn.qkv_bias.q_bias.data for b in range(n_blocks//2)]).unsqueeze(0)
     flow.eval()
     pbar = tqdm(total=n_valid_steps, bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}", leave=False)
     pbar.set_description('performing evaulation')
@@ -126,7 +130,8 @@ def evaluate(flow, model, eval_loader, euler_steps, dt, n_valid_steps, device, l
 
             # evaluate reconstruction task accuracy and loss
             for b in range(p_vanilla.shape[1]):
-                model.transformer_encoder.encoder.layers[b*2].self_attention.in_proj_bitfit_bias.q_bias.data = p_recon[:, b]
+                model.feature_extractor.blocks[b*2].attn.qkv_bias.q_bias.data = p_recon[:, b]
+                # model.transformer_encoder.encoder.layers[b*2].self_attention.in_proj_bitfit_bias.q_bias.data = p_recon[:, b]
             inp = torch.cat([x_s, x_q], dim=1)
             n_s = y_s.size(1)
             y_q = y_q.flatten()
@@ -142,7 +147,8 @@ def evaluate(flow, model, eval_loader, euler_steps, dt, n_valid_steps, device, l
             
             # evaluate generation task accuracy and loss
             for b in range(p_vanilla.shape[1]):
-                model.transformer_encoder.encoder.layers[b*2].self_attention.in_proj_bitfit_bias.q_bias.data = p_gen[:, b]
+                model.feature_extractor.blocks[b*2].attn.qkv_bias.q_bias.data = p_gen[:, b]
+                # model.transformer_encoder.encoder.layers[b*2].self_attention.in_proj_bitfit_bias.q_bias.data = p_gen[:, b]
             y_q_pred = model(inp, y_s, n_s, bias_idx)
             if gaudi_trigger is not None:
                 gaudi_trigger()
@@ -161,7 +167,8 @@ def evaluate(flow, model, eval_loader, euler_steps, dt, n_valid_steps, device, l
 
     # restore model state
     for b in range(p_vanilla.shape[1]):
-        model.transformer_encoder.encoder.layers[b*2].self_attention.in_proj_bitfit_bias.q_bias.data = p_vanilla[:, b]
+        model.feature_extractor.blocks[b*2].attn.qkv_bias.q_bias.data = p_recon[:, b]
+        # model.transformer_encoder.encoder.layers[b*2].self_attention.in_proj_bitfit_bias.q_bias.data = p_vanilla[:, b]
 
     for euler_step in euler_steps:
         for dataset_name in dataset_names:
@@ -207,8 +214,8 @@ def train_flow(flow, model, train_loader, train_eval_loader, valid_eval_loader, 
 
     # initial validation
     if start_step == 0 and not args.skip_first_eval:
-        evaluate(flow, model, train_eval_loader, euler_steps, dt, n_valid_steps, device=device,
-                logger=logger, tag='_train', global_step=0)
+        # evaluate(flow, model, train_eval_loader, euler_steps, dt, n_valid_steps, device=device,
+        #         logger=logger, tag='_train', global_step=0)
         gen_acc, recon_acc, gen_steps, recon_steps = evaluate(flow, model, valid_eval_loader, euler_steps, dt, n_valid_steps, device=device,
                                       logger=logger, tag='_valid', global_step=0)
         best_gen_acc = gen_acc
@@ -301,14 +308,20 @@ def train_flow(flow, model, train_loader, train_eval_loader, valid_eval_loader, 
     return best_gen_acc, best_gen_steps
 
 
+
+########################################################################################################################
+########################################################################################################################
+########################################################################################################################
+
+
+
 def parse_args(shell_script=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--time_batch_size', type=int, default=128)
     parser.add_argument('--num_workers', '-nw', type=int, default=3)
-    # parser.add_argument('--base_sources', nargs="+", default=['fungi', 'imagenet1k', 'mscoco', 'wikiart_artist'])
-    parser.add_argument('--base_sources', nargs="+", default=['fungi', 'mscoco'])
+    parser.add_argument('--base_sources', nargs="+", default=['fungi', 'mscoco', 'wikiart_artist'])
     parser.add_argument('--n_seeds', type=int, default=None)
     parser.add_argument('--n_timesteps', type=int, default=None)
     parser.add_argument('--skip_steps', type=int, default=None)
@@ -333,7 +346,6 @@ def parse_args(shell_script=None):
     parser.add_argument('--cubic', action='store_true', default=False)
     parser.add_argument('--use_model', action='store_true', default=False)
     parser.add_argument('--resume', action='store_true', default=False)
-    parser.add_argument('--use_cache', action='store_true', default=False)
     parser.add_argument('--ignore_time', action='store_true', default=False)
     parser.add_argument('--regression_mode', action='store_true', default=False)
     parser.add_argument('--dynamic_tasks', action='store_true', default=False)
@@ -342,13 +354,18 @@ def parse_args(shell_script=None):
     parser.add_argument('--random_couplings', action='store_true', default=False)
     parser.add_argument('--random_segment', action='store_true', default=False)
     parser.add_argument('--random_cubic', action='store_true', default=False)
-    parser.add_argument('--params_tag', type=str, default='30steps_0.15lr_5seeds_0.2noise')
+    parser.add_argument('--params_tag', type=str, default='huge_fe_even_q_bias_train_40steps_0.1lr_1seeds_0.2noise')
     
-    parser.add_argument('--model_path', type=str, default='/common_datasets/METAFLOW_DATASETS/caml_pretrained_models/CAML_Laion2b')
-    parser.add_argument('--fe_type', type=str, default="cache:timm:vit_huge_patch14_clip_224.laion2b:1280")
+    # parser.add_argument('--model_path', type=str, default='/common_datasets/METAFLOW_DATASETS/caml_pretrained_models/CAML_Laion2b')
+    # parser.add_argument('--fe_type', type=str, default="cache:timm:vit_huge_patch14_clip_224.laion2b:1280")
+    
     parser.add_argument('--fe_dtype', type=str, default='bfloat16')
     parser.add_argument('--n_tasks_train', type=int, default=500)
     parser.add_argument('--n_tasks_valid', type=int, default=10)
+    
+    parser.add_argument('--model_size', type=str, default='huge')
+    parser.add_argument('--model', type=str, default='CAML')
+    parser.add_argument('--use_cache', action='store_true', default=False)
 
     if shell_script is None:
         args = parser.parse_args()
@@ -378,8 +395,10 @@ if __name__ == '__main__':
     
     ############################################################
     # load params
-    def load_params(split, target, steps, lr, seeds, noise, root='outputs'):
-        params_folder_name = f"ft_trajs_{target}_{split}_{steps}steps_{lr}lr_{seeds}seeds_{noise}noise"
+    def load_params(split, root='outputs'):
+        params_folder_name = f"ft_trajs_{args.params_tag}"
+        if split=='val':
+            params_folder_name = params_folder_name.replace("train", "val")
         params_folder_path = os.path.join(root, params_folder_name)
         params = []
         for domain in args.base_sources:
@@ -395,8 +414,8 @@ if __name__ == '__main__':
         return params
 
     # (nT, nS, T+1, nB, d)
-    params_train = load_params('train', target='even_q_bias', steps=30, lr=0.15, seeds=5, noise=0.2)
-    params_valid = load_params('val', target='even_q_bias', steps=30, lr=0.15, seeds=5, noise=0.2)
+    params_train = load_params('train')
+    params_valid = load_params('val')
     
     # args.stochastic = not args.deterministic
     # if args.stochastic:
@@ -421,7 +440,6 @@ if __name__ == '__main__':
     # params_train = torch.load(os.path.join(params_train_dir, params_train_name)) 
     # params_valid = torch.load(os.path.join(params_valid_dir, params_valid_name))
     
-
     with torch.no_grad():
         if args.n_seeds is not None:
             params_train = params_train[:, :args.n_seeds]
@@ -437,6 +455,8 @@ if __name__ == '__main__':
     _, _, n_timesteps, n_modules, n_params = params_train.shape
     print(f'Loaded train params with shape {params_train.shape}')
     print(f'Loaded valid params with shape {params_valid.shape}')
+    
+    exit()
     
     if args.regression_mode:
         args.ignore_time = True
@@ -458,42 +478,106 @@ if __name__ == '__main__':
     print(f"exp directory: {exp_dir}")
     
     
+
+    ############################################################
+    # model_size
+    if args.model_size == 'huge':
+        args.fe_type = 'timm:vit_huge_patch14_clip_224.laion2b:1280'
+        args.model_path = '/common_datasets/METAFLOW_DATASETS/caml_pretrained_models/CAML_Laion2b'
+        encoder_size = 'laion'
+    elif args.model_size == 'base':
+        args.fe_type = 'timm:vit_base_patch16_clip_224.openai:768'
+        args.model_path = '/common_datasets/METAFLOW_DATASETS/caml_pretrained_models/CAML_CLIP'
+        encoder_size = 'large'
+    
+    
     
     ############################################################
     # create model
     print(f"Creating model: CAML with {args.fe_type}")
     
     fe_metadata = get_fe_metadata(args)
-    model = CAML(
-        feature_extractor=fe_metadata['fe'],
-        fe_dim=fe_metadata['fe_dim'],
-        fe_dtype=dtype,
-        train_fe=False, # whether to update the feature encoder weights during meta-training
-        encoder_size="laion",
-        num_bias=1,
-        dropout=0.0,
-        label_elmes=True,
-        device=device,
-        set_transformer=False
-    )
+    
+    def load_model(model_size, fe_metadata):
+        if model_size == 'huge':
+            patch_size = 14
+            embed_dim = 1280
+            depth = 32
+            num_heads = 16
+        elif model_size == 'base':
+            patch_size = 16
+            embed_dim = 768
+            depth = 12
+            num_heads = 12
+        
+        feature_extractor = VisionTransformer(
+            patch_size=patch_size,
+            embed_dim=embed_dim,
+            depth=depth,
+            num_heads=num_heads,
+            pre_norm=True,
+            norm_layer=nn.LayerNorm,
+            num_classes=0,
+            n_bias=1,
+            weight_init='skip'
+            ).to(device=device, dtype=dtype)
+        
+        fe_dict = fe_metadata['fe'].state_dict()
+        for b in range(depth):
+            for i, c in enumerate(['q', 'k', 'v']):
+                fe_dict[f'blocks.{b}.attn.qkv_bias.{c}_bias'] = fe_dict[f'blocks.{b}.attn.qkv.bias'][i*embed_dim:(i+1)*embed_dim].unsqueeze(0).repeat_interleave(1, dim=0)
+            del fe_dict[f'blocks.{b}.attn.qkv.bias']
+        feature_extractor.load_state_dict(fe_dict, strict=True)
+        
+        model = CAML(
+            feature_extractor=feature_extractor,
+            fe_dim=fe_metadata['fe_dim'],
+            fe_dtype=dtype,
+            train_fe=False, # whether to update the feature encoder weights during meta-training
+            encoder_size=encoder_size,
+            num_bias=1,
+            dropout=0.0,
+            label_elmes=True,
+            device=device,
+            set_transformer=False
+        )
+        
+        model_path = os.path.join(args.model_path, 'model.pth')
+        model_dict = torch.load(model_path, map_location='cuda')
+        for b in range(24):
+            for i, c in enumerate(['q', 'k', 'v']):
+                model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{b}.self_attention.in_proj_bitfit_bias.{c}_bias'] = \
+                    model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{b}.self_attention.in_proj_bias'][i*(embed_dim+256):(i+1)*(embed_dim+256)].unsqueeze(0).repeat_interleave(1, dim=0)
+        model_dict["transformer_encoder.elmes_scale"] = model_dict['transformer_encoder.etf_scale']
+        model_dict["transformer_encoder.label_elmes"] = model_dict["transformer_encoder.label_etf"]
+        del model_dict['transformer_encoder.label_etf']
+        del model_dict['transformer_encoder.etf_scale']
+        model.load_state_dict(model_dict, strict=False)
+        model.to(device=device, dtype=dtype)
+        model.eval()
+        print(f"checkpoint loaded: {model_path}")
+        
+        return model
+    
+    model = load_model(args.model_size, fe_metadata)
     
     # load checkpoint
-    model_path = os.path.join(args.model_path, 'model.pth')
-    model_dict = torch.load(model_path, map_location='cuda')
-    for i in range(24):
-        bias = model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bias'].unsqueeze(0)
-        d = bias.shape[1] // 3
-        model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bitfit_bias.q_bias'] = bias[:,:d]
-        model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bitfit_bias.k_bias'] = bias[:,d:2*d]
-        model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bitfit_bias.v_bias'] = bias[:,2*d:]
-    model_dict["transformer_encoder.elmes_scale"] = model_dict['transformer_encoder.etf_scale']
-    model_dict["transformer_encoder.label_elmes"] = model_dict["transformer_encoder.label_etf"]
-    del model_dict['transformer_encoder.label_etf']
-    del model_dict['transformer_encoder.etf_scale']
-    model.load_state_dict(model_dict, strict=True)
-    model.to(device=device, dtype=dtype)
-    model.eval()
-    print(f"checkpoint loaded: {model_path}")
+    # model_path = os.path.join(args.model_path, 'model.pth')
+    # model_dict = torch.load(model_path, map_location='cuda')
+    # for i in range(24):
+    #     bias = model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bias'].unsqueeze(0)
+    #     d = bias.shape[1] // 3
+    #     model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bitfit_bias.q_bias'] = bias[:,:d]
+    #     model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bitfit_bias.k_bias'] = bias[:,d:2*d]
+    #     model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{i}.self_attention.in_proj_bitfit_bias.v_bias'] = bias[:,2*d:]
+    # model_dict["transformer_encoder.elmes_scale"] = model_dict['transformer_encoder.etf_scale']
+    # model_dict["transformer_encoder.label_elmes"] = model_dict["transformer_encoder.label_etf"]
+    # del model_dict['transformer_encoder.label_etf']
+    # del model_dict['transformer_encoder.etf_scale']
+    # model.load_state_dict(model_dict, strict=True)
+    # model.to(device=device, dtype=dtype)
+    # model.eval()
+    # print(f"checkpoint loaded: {model_path}")
     
     # create flow model
     backbone = None
@@ -502,16 +586,17 @@ if __name__ == '__main__':
             backbone = deepcopy(model.backbone)
         else:
             backbone = model.backbone
-    flow = Flow(n_params, args.hidden_dim, args.n_layers, args.n_blocks, n_modules, backbone_type=args.backbone_type,
+    flow = Flow(n_params, args.hidden_dim, args.n_layers, args.n_blocks, n_modules, use_cache=args.use_cache, backbone_type=args.backbone_type,
                 freeze_backbone=(not args.update_backbone), backbone=backbone, ignore_time=args.ignore_time, gaudi=args.gaudi).to(device, dtype=dtype)
 
     
     
     ############################################################
     # create support dataset
-    support_dataset_train = AggregatedDataset(args.base_sources, 'train', args.n_tasks_train)
-    support_dataset_train_eval = AggregatedDataset(args.base_sources, 'train', args.n_tasks_train, fix_seed=True)
-    support_dataset_valid_eval = AggregatedDataset(args.base_sources, 'val', args.n_tasks_valid, fix_seed=True)
+    train_transform = fe_metadata['train_transform']
+    support_dataset_train = AggregatedDataset(args.base_sources, 'train', args.n_tasks_train, transform=train_transform)
+    support_dataset_train_eval = AggregatedDataset(args.base_sources, 'train', args.n_tasks_train, transform=train_transform, fix_seed=True)
+    support_dataset_valid_eval = AggregatedDataset(args.base_sources, 'val', args.n_tasks_valid, transform=train_transform, fix_seed=True)
     
     train_eval_dataset = FlowDataset(support_dataset_train_eval, params_train, args.n_tasks_train, eval_mode=True, stochastic=args.stochastic)
     valid_eval_dataset = FlowDataset(support_dataset_valid_eval, params_valid, args.n_tasks_valid, eval_mode=True, stochastic=args.stochastic)
@@ -527,7 +612,7 @@ if __name__ == '__main__':
     print("Dataset loaded")
     
     
-    
+
     ############################################################
     # optimizer, scheduler
     opt = torch.optim.Adam(flow.parameters(), lr=args.lr)

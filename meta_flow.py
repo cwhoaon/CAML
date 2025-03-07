@@ -225,9 +225,36 @@ class Identity(nn.Module):
     
 
 class SupportEncoder(nn.Module):
-    def __init__(self, hidden_dim=384, n_blocks=2, n_heads=8, backbone_type='resnet18', freeze_backbone=True, backbone=None, gaudi=False):
+    def __init__(self, hidden_dim=384, n_blocks=2, n_heads=8, use_cache=False, backbone_type='resnet18', freeze_backbone=True, backbone=None, gaudi=False):
         super().__init__()
-        feature_dim = 1280
+        self.use_cache = use_cache
+        
+        if self.use_cache:
+            feature_dim = 1280
+        else:
+            if backbone is not None:
+                self.backbone = backbone
+                feature_dim = 384
+            else:
+                if backbone_type == 'resnet18':
+                    self.backbone = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
+                    self.backbone.fc = nn.Identity()
+                    feature_dim = 512
+                elif backbone_type == 'resnet50':
+                    self.backbone = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
+                    self.backbone.fc = nn.Identity()
+                    feature_dim = 2048
+                elif backbone_type == 'dino_small_patch16':
+                    self.backbone = vit.__dict__['vit_small'](patch_size=16, num_classes=0, gaudi=gaudi)
+                    url = "dino_deitsmall16_pretrain/dino_deitsmall16_pretrain.pth"
+                    state_dict = torch.hub.load_state_dict_from_url(url="https://dl.fbaipublicfiles.com/dino/" + url)
+                    self.backbone.load_state_dict(state_dict, strict=True)
+                    feature_dim = 384
+                else:
+                    raise ValueError(f"backbone_type {backbone_type} is not supported")
+            self.freeze_backbone = freeze_backbone
+        
+        
         self.task_projector = nn.Linear(feature_dim, hidden_dim)
 
         if n_blocks == 0:
@@ -264,30 +291,65 @@ class SupportEncoder(nn.Module):
                 - support embedding
                 - d: hidden_dim
         '''
-        assert x.ndim == 3 or x.ndim == 4, f"x should be 5D or 6D tensor, given shape is {x.shape}"
-        
-        if x.ndim == 3:
-            assert y is not None
-            B, M = x.shape[:2]
-            assert B == 1
-            num_classes = y.max() + 1 # NOTE: assume B==1
-            m = None
+        if self.use_cache:
+            assert x.ndim == 3 or x.ndim == 4, f"x should be 5D or 6D tensor, given shape is {x.shape}"
+            if x.ndim == 3:
+                assert y is not None
+                B, M = x.shape[:2]
+                assert B == 1
+                num_classes = y.max() + 1 # NOTE: assume B==1
+                m = None
+            elif x.ndim == 4:
+                y = None
+            z = x
+            # average for shots
+            if y is not None:
+                y_onehot = F.one_hot(y, num_classes).to(dtype=z.dtype).transpose(1, 2) # B, N, M
+                z = torch.bmm(y_onehot, z) # B, N, d
+                z = z / y_onehot.sum(dim=2, keepdim=True) # NOTE: may div 0 if some classes got 0 images
+                m_ways = None
+            else:
+                if m is not None:
+                    m_shot = m[..., None].to(dtype=z.dtype) # (B, N, K, 1)
+                z = (z*m_shot).sum(dim=2) / torch.where(m[:, :, :1], m_shot.sum(dim=2), torch.ones_like(m[:, :, :1])) # B, N, d
+                if m is not None:
+                    m_ways = m[:, :, 0] # B, N
         else:
-            y = None
-        
-        z = x
-        # average for shots
-        if y is not None:
-            y_onehot = F.one_hot(y, num_classes).to(dtype=z.dtype).transpose(1, 2) # B, N, M
-            z = torch.bmm(y_onehot, z) # B, N, d
-            z = z / y_onehot.sum(dim=2, keepdim=True) # NOTE: may div 0 if some classes got 0 images
-            m_ways = None
-        else:
-            if m is not None:
-                m_shot = m[..., None].to(dtype=z.dtype) # (B, N, K, 1)
-            z = (z*m_shot).sum(dim=2) / torch.where(m[:, :, :1], m_shot.sum(dim=2), torch.ones_like(m[:, :, :1])) # B, N, d
-            if m is not None:
-                m_ways = m[:, :, 0] # B, N
+            assert x.ndim == 5 or x.ndim == 6, f"x should be 5D or 6D tensor, given shape is {x.shape}"
+            if x.ndim == 5:
+                assert y is not None
+                B, M = x.shape[:2]
+                assert B == 1
+                num_classes = y.max() + 1 # NOTE: assume B==1
+                x = rearrange(x, 'B M C H W -> (B M) C H W')
+                m = None
+            else:
+                B, N, K = x.shape[:3]
+                x = rearrange(x, 'B N K ... -> (B N K) ...')
+                y = None
+                
+            # per-image encoding
+            if self.freeze_backbone:
+                self.backbone.eval()
+                with torch.no_grad():
+                    z = self.backbone(x)
+            else:
+                z = self.backbone(x)
+                
+            # average for shots
+            if y is not None:
+                z = rearrange(z, '(B M) d -> B M d', B=B, M=M)
+                y_onehot = F.one_hot(y, num_classes).to(dtype=z.dtype).transpose(1, 2) # B, N, M
+                z = torch.bmm(y_onehot, z) # B, N, d
+                z = z / y_onehot.sum(dim=2, keepdim=True) # NOTE: may div 0 if some classes got 0 images
+                m_ways = None
+            else:
+                if m is not None:
+                    m_shot = m[..., None].to(dtype=z.dtype) # (B, N, K, 1)
+                z = rearrange(z, '(B N K) d -> B N K d', B=B, N=N, K=K)
+                z = (z*m_shot).sum(dim=2) / torch.where(m[:, :, :1], m_shot.sum(dim=2), torch.ones_like(m[:, :, :1])) # B, N, d
+                if m is not None:
+                    m_ways = m[:, :, 0] # B, N
 
         # task encoding
         z = self.task_projector(z)
@@ -381,10 +443,10 @@ class Drift(nn.Module):
 
 class Flow(nn.Module):
     def __init__(self, n_params=1152, hidden_dim=384, n_layers=4, n_blocks=2, n_modules=12,
-                 backbone_type='resnet18', freeze_backbone=True, backbone=None, ignore_time=False, gaudi=False):
+                 use_cache=False, backbone_type='resnet18', freeze_backbone=True, backbone=None, ignore_time=False, gaudi=False):
         super().__init__()
         self.drift = Drift(n_params, hidden_dim, n_layers, n_modules=n_modules, ignore_time=ignore_time)
-        self.support_encoder = SupportEncoder(hidden_dim, n_blocks, backbone_type=backbone_type,
+        self.support_encoder = SupportEncoder(hidden_dim, n_blocks, use_cache=use_cache, backbone_type=backbone_type,
                                               freeze_backbone=freeze_backbone, backbone=backbone, gaudi=gaudi)
 
     def forward(self, p_t, t, x, m=None, y=None, loss=None):

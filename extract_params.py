@@ -36,7 +36,7 @@ def split_data(x: list, y: list, max_support, max_query, batch_size, transform=N
         x_s_, y_s_, x_q_, y_q_ = [], [], [], []
         for c in range(len(x)):
             ids = torch.randperm(len(x[c][0]))
-            k = len(ids) // 2
+            k = len(ids) // 2 
             ids_s = ids[:min(k, max_support)]
             ids_q = ids[k:k + min(k, max_query)]
             x_s_.append(x[c][0][ids_s])
@@ -75,7 +75,9 @@ def finetune(model, target_params_keys, batch, n_steps, lr, max_support, max_que
     with tqdm(range(n_steps), bar_format="{desc:<5}{percentage:3.0f}%|{bar:10}{r_bar}", leave=False) as pbar:
         for _ in pbar:
             x_s, y_s, x_q, y_q = split_data(x, y, max_support, max_query, batch_size)
+            
             x_s, y_s, x_q, y_q = x_s.to(device=device, dtype=dtype), y_s.to(device=device), x_q.to(device=device, dtype=dtype), y_q.to(device=device)
+            
             
             inp = torch.cat([x_s, x_q], dim=1)
             n_s = y_s.size(1)
@@ -153,10 +155,10 @@ def parse_args():
     parser.add_argument('--offset', type=int, default=0)
     parser.add_argument('--batch_size', type=int, default=1)
     parser.add_argument('--max_support', type=int, default=5)
-    parser.add_argument('--max_query', type=int, default=2)
+    parser.add_argument('--max_query', type=int, default=15)
     parser.add_argument('--lr', type=float, default=None)
     parser.add_argument('--n_seeds', type=int, default=1)
-    parser.add_argument('--n_steps', type=int, default=30)
+    parser.add_argument('--n_steps', type=int, default=40)
     parser.add_argument('--n_tasks', type=int, default=500)
     parser.add_argument('--noise', type=float, default=0.2)
     parser.add_argument('--split', type=str, default='train', choices=['train', 'val'])
@@ -164,7 +166,10 @@ def parse_args():
     parser.add_argument('--fe_dtype', type=str, default='bfloat16')
     parser.add_argument('--model', type=str, default='CAML')
     parser.add_argument('--fe_type', type=str, default="timm:vit_huge_patch14_clip_224.laion2b:1280")
+    # parser.add_argument('--fe_type', type=str, default="timm:vit_base_patch16_clip_224.openai:768")
     parser.add_argument('--freeze_fe', action='store_true', default=False)
+    
+    parser.add_argument('--model_size', type=str, default='huge')
     
     args = parser.parse_args()
     
@@ -208,10 +213,23 @@ if __name__ == '__main__':
             weight_init='skip'
         ).to(device=device, dtype=dtype)
         
+        # feature_extractor = VisionTransformer(
+        #     patch_size=16,
+        #     embed_dim=768,
+        #     depth=12,
+        #     num_heads=12,
+        #     pre_norm=True,
+        #     norm_layer=nn.LayerNorm,
+        #     num_classes=0,
+        #     n_bias=args.batch_size,
+        #     weight_init='skip'
+        # ).to(device=device, dtype=dtype)
+        
         fe_dict = fe_metadata['fe'].state_dict()
         for b in range(32):
+        # for b in range(12):
             for i, c in enumerate(['q', 'k', 'v']):
-                fe_dict[f'blocks.{b}.attn.qkv_bias.{c}_bias'] = fe_dict[f'blocks.{b}.attn.qkv.bias'][i*1280:(i+1)*1280].unsqueeze(0).repeat_interleave(args.batch_size, dim=0)
+                fe_dict[f'blocks.{b}.attn.qkv_bias.{c}_bias'] = fe_dict[f'blocks.{b}.attn.qkv.bias'][i*fe_metadata['fe_dim']:(i+1)*fe_metadata['fe_dim']].unsqueeze(0).repeat_interleave(args.batch_size, dim=0)
             del fe_dict[f'blocks.{b}.attn.qkv.bias']
         feature_extractor.load_state_dict(fe_dict, strict=True)
     
@@ -234,7 +252,7 @@ if __name__ == '__main__':
     for b in range(24):
         for i, c in enumerate(['q', 'k', 'v']):
             model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{b}.self_attention.in_proj_bitfit_bias.{c}_bias'] = \
-                model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{b}.self_attention.in_proj_bias'][i*1536:(i+1)*1536].unsqueeze(0).repeat_interleave(args.batch_size, dim=0)
+                model_dict[f'transformer_encoder.encoder.layers.encoder_layer_{b}.self_attention.in_proj_bias'][i*(fe_metadata['fe_dim']+256):(i+1)*(fe_metadata['fe_dim']+256)].unsqueeze(0).repeat_interleave(args.batch_size, dim=0)
     model_dict["transformer_encoder.elmes_scale"] = model_dict['transformer_encoder.etf_scale']
     model_dict["transformer_encoder.label_elmes"] = model_dict["transformer_encoder.label_etf"]
     del model_dict['transformer_encoder.label_etf']
@@ -348,7 +366,7 @@ if __name__ == '__main__':
     criterion = torch.nn.CrossEntropyLoss()
     
     if args.lr is not None:
-        save_root = f"outputs/ft_trajs_{args.target_param}_{args.split}_{args.n_steps}steps_{args.lr}lr_{args.n_seeds}seeds_{args.noise}noise"
+        save_root = f"outputs/ft_trajs_{args.model_size}_{args.target_param}_{args.split}_{args.n_steps}steps_{args.lr}lr_{args.n_seeds}seeds_{args.noise}noise"
     else:
         save_root = f"outputs/ft_trajs_{args.target_param}_{args.split}_lr_searching"
     os.makedirs(save_root, exist_ok=True)

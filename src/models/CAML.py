@@ -81,6 +81,7 @@ class CAML(nn.Module):
       else:
         with torch.no_grad():
           features = self.get_feature_vector(inp, bias_idx)
+        # import ipdb; ipdb.set_trace()
         features = features.reshape(n_seeds, n_x, -1)
     else:
       features = inp
